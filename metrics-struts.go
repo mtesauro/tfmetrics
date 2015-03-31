@@ -3,6 +3,7 @@
 package main
 
 import (
+	"net/http"
 	"time"
 )
 
@@ -15,10 +16,11 @@ import (
 ///////////////////////////////////////////////////////////////////
 
 type tfMonth struct {
-	month      time.Month     // nice formated date - e.g. 2015-03
+	tStamp     time.Time      // Time stored as Go's time.Time stored as first day of the month
 	mpartial   bool           // if we're part way through the month
 	quarter    string         // what quarter we're in - e.g. 2015-Q1
 	qpartial   bool           // if we're part way through the quarter
+	totVulns   int            // total vuls - includes all but info
 	critApps   map[string]int // map of [app name] count of crits
 	percntCrit float64        // apps with crits / total apps * 100 e.g. 8.03%
 	highApps   map[string]int // map of [app name] count of highs
@@ -38,7 +40,7 @@ type tfMonth struct {
 
 type tfQuarter struct {
 	qLabel     string         // what quarter we're in - e.g. 2015-Q1
-	qMonths    [3]time.Month  // array of months from Go's time pacakge
+	qTStamps   [3]time.Time   // array of Time from Go's time pacakge
 	months     [3]*tfMonth    // pointers to the three months that make up the quarter
 	critApps   map[string]int // map of [app name] count of crits
 	percntCrit float64        // apps with crits / total apps * 100 e.g. 8.03%
@@ -79,6 +81,9 @@ type tfYear struct {
 // Helper data structures for metrics //
 ////////////////////////////////////////
 
+// TF Client
+var tfc *http.Client = nil
+
 // Summary data structures
 var appCount int = 0
 var teamCounts = make(map[string]int)
@@ -106,17 +111,10 @@ var qtrDefs = map[int]string{
 	12: "Q4",
 }
 
-var monthLbl = map[int]string{
-	1:  "January",
-	2:  "February",
-	3:  "March",
-	4:  "April",
-	5:  "May",
-	6:  "June",
-	7:  "July",
-	8:  "August",
-	9:  "September",
-	10: "October",
-	11: "November",
-	12: "December",
+// And the months the quarters end on
+var quarterEnd = map[int]int{
+	1: 3,
+	2: 6,
+	3: 9,
+	4: 12,
 }
