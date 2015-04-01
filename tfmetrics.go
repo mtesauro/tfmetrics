@@ -6,6 +6,7 @@ import (
 	tf "github.com/mtesauro/tfclient"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -69,10 +70,86 @@ func sumMonth(m *tfMonth) {
 	m.critApps = appsWithVulns(5, &search)
 
 	// Find the apps with highs aka int 4
-	//m.critApps = appsWithVulns(4, &search)
+	m.highApps = appsWithVulns(4, &search)
+
+	// Calculate precent crit and high
+	m.percntCrit = (float64(len(m.critApps)) / float64(appCount)) * 100
+	m.percntHigh = (float64(len(m.highApps)) / float64(appCount)) * 100
+
+	// Best and Worst apps
+	//m.bestApps, m.worstApps = rateApps(&search)
 
 	return
 }
+
+func rateApps(srch *tf.SrchResp) (map[string]int, map[string]int) {
+	apps := make(map[string]int)
+
+	// Cycle through the results struct, pulling out the severity level sent in
+	for k, _ := range srch.Results {
+		switch srch.Results[k].Severity.Value {
+		case 5:
+			// Critical
+			sumApps(apps, srch.Results[k].Apps.Name, vulnWeight[5])
+		case 4:
+			// High
+			sumApps(apps, srch.Results[k].Apps.Name, vulnWeight[4])
+		case 3:
+			// Medium
+			sumApps(apps, srch.Results[k].Apps.Name, vulnWeight[3])
+		case 2:
+			// Low
+			sumApps(apps, srch.Results[k].Apps.Name, vulnWeight[2])
+		}
+	}
+
+	// Sort apps and pull off top 10 and bottom 10
+
+	return apps, apps
+}
+
+func sumApps(a map[string]int, name string, val int) map[string]int {
+	// Takes a map and add val (value) to the int counter of map[string]int
+	// Sums up values under a label - usually an app name
+	if _, ok := a[name]; ok {
+		a[name] = a[name] + val
+	} else {
+		a[name] = val
+	}
+
+	return a
+}
+
+// Custom function to return a sorted map[int]map[string]int descending by default
+// if reverse is set to true, it will be ascending
+func countSorted(m map[string]int, reverse bool) map[int]map[string]int {
+	// Invert sent map
+	invMap := make(map[int]string, len(m))
+	for k, v := range m {
+		invMap[v] = k
+	}
+
+	var keys []int
+	for k := range invMap {
+		keys = append(keys, k)
+	}
+
+	if reverse {
+		sort.Ints(keys)
+	} else {
+		sort.Sort(sort.Reverse(sort.IntSlice(keys)))
+	}
+
+	// Create a new map and return it
+	sorted := make(map[int]map[string]int)
+	for i, k := range keys {
+		sorted[i] = map[string]int{invMap[k]: k}
+	}
+
+	return sorted
+}
+
+// End custom sort fuctions
 
 func monthSearch(t time.Time, srch *tf.SrchResp) {
 	// Create a struct to hold our search parameters
@@ -87,7 +164,7 @@ func monthSearch(t time.Time, srch *tf.SrchResp) {
 	tf.EndSearch(&s, end)
 	// And only ask for all but infos - 5, 4, 3, 2
 	tf.SeveritySearch(&s, 5, 4, 3, 2)
-	// Increase the default number of results up from 10
+	// Increase number of results up from the default of 10
 	tf.NumSearchResults(&s, 1500)
 	// Only open vulns
 	tf.ShowInSearch(&s, "open")
@@ -108,6 +185,13 @@ func monthSearch(t time.Time, srch *tf.SrchResp) {
 
 func appsWithVulns(sev int, srch *tf.SrchResp) map[string]int {
 	apps := make(map[string]int)
+
+	// Cycle through the results struct, pulling out the severity level sent in
+	for k, _ := range srch.Results {
+		if srch.Results[k].Severity.Value == sev {
+			apps = sumApps(apps, srch.Results[k].Apps.Name, 1)
+		}
+	}
 
 	return apps
 }
@@ -170,7 +254,9 @@ func main() {
 
 	// Fill in current month's stats
 	var m0 tfMonth
-	m0.tStamp = time.Now()
+	//m0.tStamp = time.Now()
+	// CHEATING AND FIXING THE MONTH TO BE MARCH 30, 2015
+	m0.tStamp = time.Date(2015, time.Month(3), 30, 0, 0, 0, 0, time.UTC)
 	curQua := currentQuarter(m0.tStamp.Month(), m0.tStamp.Year())
 	m0.quarter = curQua
 	// Fill in the rest of the month
@@ -187,60 +273,36 @@ func main() {
 
 	fmt.Println()
 	// shortcircuit the code
-	os.Exit(0)
+	//os.Exit(0)
 
 	// Print the metrics we've gathered so far to screen
 	// Eventually move this to a file so it can be emailed
 	fmt.Println("")
 	fmt.Printf("Total Apps is %v\n", appCount)
-	//fmt.Printf("Team counts is %+v\n\n", teamCounts)
-	// TODO Add sort by value to teamCounts
 	fmt.Println("Individual team counts are:")
-	for i, v := range teamCounts {
-		fmt.Printf("  %v includes %v apps\n", i, v)
+	sTeamCts := countSorted(teamCounts, false)
+	for j := 0; j < len(sTeamCts); j++ {
+		for k, v := range sTeamCts[j] {
+			fmt.Printf("  %v includes %v apps\n", k, v)
+		}
 	}
 	fmt.Println("")
-	fmt.Printf("Total Apps with crits is %v\n", len(critApps))
-	//fmt.Printf("Apps with crits is %+v\n\n", critApps)
+	//os.Exit(0)
+	fmt.Println("Double check the below - count doesn't match and is it apps or LoB?")
+	fmt.Printf("Total LoB with crits is %v\n", len(critApps))
 	// If there's apps with crits, print them and the average
 	if len(critApps) > 0 {
-		// TODO Add sort by value to critApps
-		fmt.Println("Apps with crits are:")
-		for i, v := range critApps {
-			fmt.Printf("  %v has %v crit findings\n", i, v)
+		fmt.Println("LoB with crits are:")
+		sCritApps := countSorted(critApps, false)
+		for j := 0; j < len(sCritApps); j++ {
+			for k, v := range sCritApps[j] {
+				fmt.Printf("  %v has %v crit findings\n", k, v)
+			}
 		}
 		percntCrits := (float64(len(critApps)) / float64(appCount)) * 100
-		fmt.Printf("Percentage of apps with crits is %.2f %%\n\n", percntCrits)
+		fmt.Printf("Percentage of apps with crits is %.2f%%\n\n", percntCrits)
 	}
 
 	fmt.Println("")
-
-	//// Before searching you must setup a default Search Struct
-	//srch := tf.CreateSearchStruct()
-	//// Restrict default search to Q1 2015
-	////tf.StartSearch(&srch, "01/01/2015")
-	////tf.EndSearch(&srch, "03/31/2015")
-	//// And only ask for criticals
-	//tf.SeveritySearch(&srch, 5)
-	//// Increase the default number of results up from 10
-	//tf.NumSearchResults(&srch, 800)
-	////                  seems to die at 488 results
-	//// Only open vulns
-	//tf.ShowInSearch(&srch, "open")
-	//// Send the search query to TF
-	//vulns, err := tf.VulnSearch(tfc, &srch)
-	//if err != nil {
-	//	fmt.Print(err)
-	//	os.Exit(1)
-	//}
-	////fmt.Printf("\nvulns is %+v\n\n", vulns)
-	//// Create a search struct and load it with the search with just conducted
-	//var search tf.SrchResp
-	////os.Exit(0)
-	//err = tf.MakeSearchStruct(&search, vulns)
-	//if err != nil {
-	//	fmt.Print(err)
-	//	os.Exit(1)
-	//}
-	//fmt.Printf("\nQ1 total vuln count is %+v \n\n", len(search.Results))
+	fmt.Println("Done.")
 }

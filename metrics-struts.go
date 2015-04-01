@@ -118,3 +118,11 @@ var quarterEnd = map[int]int{
 	3: 9,
 	4: 12,
 }
+
+var vulnWeight = map[int]int{
+	5: 16, // Critical weight
+	4: 8,  // High weight
+	3: 4,  // Medium weight
+	2: 2,  // Low weight
+	1: 1,  // Info weight
+}
