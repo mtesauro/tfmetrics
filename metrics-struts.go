@@ -29,7 +29,7 @@ type tfMonth struct {
 	bestApps      map[string]int // top 10 apps with least vuln score
 	worstApps     map[string]int // top 10 apps with the greatest vuln score
 	toolUsage     map[string]int // map of [tool name] / count of usage
-	topCWE        map[int]int    // top 10 CWEs in this month's findings
+	topCWE        map[string]int // top 10 CWEs in this month's findings
 	trackerCount  map[string]int // map of [app name] issue tracker count
 	percntTracker float64        // apps with issue tracker / total apps
 }
@@ -85,9 +85,9 @@ type tfYear struct {
 var tfc *http.Client = nil
 
 // Summary data structures
-var appCount int = 0
-var teamCounts = make(map[string]int)
-var critApps = make(map[string]int)
+var appCount int = 0                  // overall count of apps
+var teamCounts = make(map[string]int) // Number of apps under each team/LoB
+var critsByLob = make(map[string]int) // Number of criticals by team/LoB
 
 type quarter struct {
 	label string
@@ -126,3 +126,5 @@ var vulnWeight = map[int]int{
 	2: 2,  // Low weight
 	1: 1,  // Info weight
 }
+
+const monthCutoff = 15

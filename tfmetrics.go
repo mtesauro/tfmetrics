@@ -21,7 +21,7 @@ func createSummary(teams *tf.TeamResp) {
 
 		// For apps with criticals, pull out them plus the count
 		if v.NumCrit > 0 {
-			critApps[v.Name] = v.NumCrit
+			critsByLob[v.Name] = v.NumCrit
 		}
 	}
 
@@ -40,11 +40,6 @@ func getTeams(tfc *http.Client, t *tf.TeamResp) {
 	tf.MakeTeamStruct(t, tResp)
 
 	return
-}
-
-func currentQuarter(m time.Month, y int) string {
-
-	return qtrDefs[int(m)] + "-" + strconv.Itoa(y)
 }
 
 func sumMonth(m *tfMonth) {
@@ -77,9 +72,43 @@ func sumMonth(m *tfMonth) {
 	m.percntHigh = (float64(len(m.highApps)) / float64(appCount)) * 100
 
 	// Best and Worst apps
-	//m.bestApps, m.worstApps = rateApps(&search)
+	m.bestApps, m.worstApps = rateApps(&search)
+
+	// Tool Usage
+	m.toolUsage = toolUsage(&search)
+
+	// Top 10 CWE's
+	m.topCWE = cweCounts(&search)
 
 	return
+}
+
+func cweCounts(srch *tf.SrchResp) map[string]int {
+	cwes := make(map[string]int)
+
+	// Cycle through the results struct, pulling out the tools which found vulns
+	for k, _ := range srch.Results {
+		c := "CWE-" + strconv.Itoa(srch.Results[k].CweVuln.Id) +
+			": " + srch.Results[k].CweVuln.Name
+		cwes = sumApps(cwes, c, 1)
+	}
+
+	return cwes
+}
+
+func toolUsage(srch *tf.SrchResp) map[string]int {
+	tools := make(map[string]int)
+
+	// Cycle through the results struct, pulling out the tools which found vulns
+	for k, _ := range srch.Results {
+		for i := 0; i < len(srch.Results[k].Scanners); i++ {
+			t := srch.Results[k].Scanners[i]
+			tools = sumApps(tools, t, 1)
+		}
+	}
+
+	//fmt.Printf("Tools count is %+v\n", tools)
+	return tools
 }
 
 func rateApps(srch *tf.SrchResp) (map[string]int, map[string]int) {
@@ -104,8 +133,38 @@ func rateApps(srch *tf.SrchResp) (map[string]int, map[string]int) {
 	}
 
 	// Sort apps and pull off top 10 and bottom 10
+	sApps := countSorted(apps, true)
 
-	return apps, apps
+	var l, bestEnd, worseStart int
+	l = len(sApps)
+	if l/2 < 10 {
+		if l%2 == 0 {
+			bestEnd = l / 2
+			worseStart = l / 2
+		} else {
+			bestEnd = (l-1)/2 + 1
+			worseStart = (l + 1) / 2
+		}
+	} else {
+		bestEnd = 11
+		worseStart = len(sApps) - 10
+	}
+
+	best := make(map[string]int)
+	for b := 0; b < bestEnd; b++ {
+		for k, v := range sApps[b] {
+			best[k] = v
+		}
+	}
+
+	worse := make(map[string]int)
+	for w := worseStart; w < len(sApps); w++ {
+		for k, v := range sApps[w] {
+			worse[k] = v
+		}
+	}
+
+	return best, worse
 }
 
 func sumApps(a map[string]int, name string, val int) map[string]int {
@@ -122,7 +181,7 @@ func sumApps(a map[string]int, name string, val int) map[string]int {
 
 // Custom function to return a sorted map[int]map[string]int descending by default
 // if reverse is set to true, it will be ascending
-func countSorted(m map[string]int, reverse bool) map[int]map[string]int {
+func countSorted(m map[string]int, ascending bool) map[int]map[string]int {
 	// Invert sent map
 	invMap := make(map[int]string, len(m))
 	for k, v := range m {
@@ -134,7 +193,7 @@ func countSorted(m map[string]int, reverse bool) map[int]map[string]int {
 		keys = append(keys, k)
 	}
 
-	if reverse {
+	if ascending {
 		sort.Ints(keys)
 	} else {
 		sort.Sort(sort.Reverse(sort.IntSlice(keys)))
@@ -224,15 +283,27 @@ func lastMonth(m int) bool {
 	return false
 }
 
-func previoiusQuarter(pQ *tfQuarter) string {
-	return "Q4-2024"
+func previousMonth(n time.Time) time.Time {
+	d := lastDate(int(n.Month()-1), n.Year())
+	return time.Date(n.Year(), time.Month(n.Month()-1), d, 0, 0, 0, 0, time.UTC)
 }
 
-func sumQuarter(m1 *tfMonth, m2 *tfMonth, m3 *tfMonth, q *tfQuarter) {
-	q.qLabel = "Q1-2025"
+func getQuarter(m time.Month, y int) string {
+
+	return qtrDefs[int(m)] + "-" + strconv.Itoa(y)
 }
 
-func sumYear(q1 *tfQuarter, q2 *tfQuarter, q3 *tfQuarter, q4 *tfQuarter, y *tfYear) {
+func sumQuarter(lastMo *tfMonth, q *tfQuarter) {
+	q.qLabel = lastMo.quarter
+	q.qTStamps = [3]time.Time{
+		lastMo.tStamp,
+		time.Now(),
+		time.Now(),
+	}
+
+}
+
+func sumYear(lastQtr *tfQuarter, y *tfYear) {
 	y.year = 2025
 }
 
@@ -250,30 +321,40 @@ func main() {
 	getTeams(tfc, &teams)
 	createSummary(&teams)
 
-	// Gather trending metrics starting with current month & year
+	// Gather trending metrics starting with current month, quarter & year
 
 	// Fill in current month's stats
 	var m0 tfMonth
-	//m0.tStamp = time.Now()
+	n := time.Now()
+	// If current day is less then monthCutoff, then back up a month for metrics
+	if n.Day() <= monthCutoff {
+		m0.tStamp = previousMonth(n)
+	} else {
+		m0.tStamp = n
+	}
 	// CHEATING AND FIXING THE MONTH TO BE MARCH 30, 2015
 	m0.tStamp = time.Date(2015, time.Month(3), 30, 0, 0, 0, 0, time.UTC)
-	curQua := currentQuarter(m0.tStamp.Month(), m0.tStamp.Year())
+	// CHEATING END
+	curQua := getQuarter(m0.tStamp.Month(), m0.tStamp.Year())
 	m0.quarter = curQua
 	// Fill in the rest of the month
 	sumMonth(&m0)
 
-	// Check to see if current quarter is partial of complete
+	// Gather metrics for the previous quarter
+	// TODO - Do partial and last full or just last full or just the partial?
+	var q0 tfQuarter
+	sumQuarter(&m0, &q0)
 
 	fmt.Printf("Current Day is %+v\n", m0.tStamp.Day())
 	fmt.Printf("Current Month is %+v\n", m0.tStamp.Month())
 	fmt.Printf("Current month as an int is %d\n", int(m0.tStamp.Month()))
 	fmt.Printf("Current Quarter is %+v\n", curQua)
 	fmt.Printf("Current Year is %+v\n", m0.tStamp.Year())
-	fmt.Printf("\nMonth 0 is %+v\n", m0)
+	fmt.Printf("\nQuarter 0 is %+v\n", q0)
 
 	fmt.Println()
 	// shortcircuit the code
-	//os.Exit(0)
+	os.Exit(0)
 
 	// Print the metrics we've gathered so far to screen
 	// Eventually move this to a file so it can be emailed
@@ -289,17 +370,17 @@ func main() {
 	fmt.Println("")
 	//os.Exit(0)
 	fmt.Println("Double check the below - count doesn't match and is it apps or LoB?")
-	fmt.Printf("Total LoB with crits is %v\n", len(critApps))
+	fmt.Printf("Total LoB with crits is %v\n", len(critsByLob))
 	// If there's apps with crits, print them and the average
-	if len(critApps) > 0 {
+	if len(critsByLob) > 0 {
 		fmt.Println("LoB with crits are:")
-		sCritApps := countSorted(critApps, false)
-		for j := 0; j < len(sCritApps); j++ {
-			for k, v := range sCritApps[j] {
+		sCritsLob := countSorted(critsByLob, false)
+		for j := 0; j < len(sCritsLob); j++ {
+			for k, v := range sCritsLob[j] {
 				fmt.Printf("  %v has %v crit findings\n", k, v)
 			}
 		}
-		percntCrits := (float64(len(critApps)) / float64(appCount)) * 100
+		percntCrits := (float64(len(critsByLob)) / float64(appCount)) * 100
 		fmt.Printf("Percentage of apps with crits is %.2f%%\n\n", percntCrits)
 	}
 
