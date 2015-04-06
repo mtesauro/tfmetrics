@@ -42,8 +42,13 @@ func getTeams(tfc *http.Client, t *tf.TeamResp) {
 }
 
 func sumMonth(m *tfMonth) {
-	curQua := getQuarter(m.tStamp.Month(), m.tStamp.Year())
-	m.quarter = curQua
+	// Check that time stamp is set before summing the month as its required
+	if m.tStamp.Year() == 1 {
+		fmt.Println("Error:  You must set the timestamp - tfMonth.tStamp - before calling sumMonth")
+		os.Exit(1)
+	}
+
+	m.quarter = getQuarter(m.tStamp.Month(), m.tStamp.Year())
 
 	// the partials defaults to false, set it true if needed
 	if m.tStamp.Day() != lastDate(int(m.tStamp.Month()), m.tStamp.Year()) {
@@ -86,6 +91,7 @@ func sumMonth(m *tfMonth) {
 }
 
 func cweCounts(srch *tf.SrchResp) map[string]int {
+	// TODO - add an option to only pull CWEs of 1+ severity level(s)
 	cwes := make(map[string]int)
 
 	// Cycle through the results struct, pulling out the tools which found vulns
@@ -402,8 +408,9 @@ func main() {
 	} else {
 		m0.tStamp = n
 	}
+
 	// CHEATING AND FIXING THE MONTH TO BE MARCH 30, 2015
-	//m0.tStamp = time.Date(2015, time.Month(3), 30, 0, 0, 0, 0, time.UTC)
+	m0.tStamp = time.Date(2015, time.Month(2), 28, 0, 0, 0, 0, time.UTC)
 	// CHEATING END
 
 	// Gather data for the month
@@ -415,11 +422,14 @@ func main() {
 	var q0 tfQuarter
 	sumQuarter(&m0, &q0)
 
+	//os.Exit(0)
+
 	// Print the metrics we've gathered so far to screen
 	// Eventually move this to a file so it can be emailed
 	fmt.Println("")
 	fmt.Println("==========[Summary Metrics]==========")
 	fmt.Printf("Total Apps in ThreadFix is %v\n", appCount)
+	fmt.Printf("Number of LoB/Teams in Threadfix is %v\n", len(teamCounts))
 	fmt.Println("Individual LoB/Team counts are:")
 	sTeamCts := sortCounts(teamCounts, false)
 	for j := 0; j < len(sTeamCts); j++ {
@@ -428,7 +438,7 @@ func main() {
 		}
 	}
 	fmt.Println("")
-	fmt.Printf("Total LoB/Team with high findings is %v\n", len(critsByLob))
+	fmt.Printf("Total LoB/Team with critical findings is %v\n", len(critsByLob))
 	// If there's apps with crits, print them and the average
 	if len(critsByLob) > 0 {
 		fmt.Println("LoB with critical findings are:")
@@ -493,7 +503,7 @@ func main() {
 	sTools := sortCounts(m0.toolUsage, false)
 	for j := 0; j < len(sTools); j++ {
 		for k, v := range sTools[j] {
-			fmt.Printf("  %v had results imported %v times\n", k, v)
+			fmt.Printf("  %v found %v results\n", k, v)
 		}
 	}
 	// Top 10 CWEs
@@ -559,7 +569,7 @@ func main() {
 	sQTools := sortCounts(q0.toolUsage, false)
 	for j := 0; j < len(sQTools); j++ {
 		for k, v := range sQTools[j] {
-			fmt.Printf("  %v had results imported %v times\n", k, v)
+			fmt.Printf("  %v found %v results\n", k, v)
 		}
 	}
 	// Top 10 CWEs
