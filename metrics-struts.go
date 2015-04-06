@@ -42,6 +42,7 @@ type tfQuarter struct {
 	qLabel     string         // what quarter we're in - e.g. 2015-Q1
 	qTStamps   [3]time.Time   // array of Time from Go's time pacakge
 	months     [3]*tfMonth    // pointers to the three months that make up the quarter
+	totVulns   int            // total vulns - includes all but info for the quarter
 	critApps   map[string]int // map of [app name] count of crits
 	percntCrit float64        // apps with crits / total apps * 100 e.g. 8.03%
 	highApps   map[string]int // map of [app name] count of highs
@@ -50,7 +51,7 @@ type tfQuarter struct {
 	bestApps      map[string]int // top 10 apps with least vuln score
 	worstApps     map[string]int // top 10 apps with the greatest vuln score
 	toolUsage     map[string]int // map of [tool name] / count of usage
-	topCWE        map[int]int    // top 10 CWEs in this month's findings
+	topCWE        map[string]int // top 10 CWEs in this month's findings
 	trackerCount  map[string]int // map of [app name] issue tracker count
 	percntTracker float64        // apps with issue tracker / total apps
 }
@@ -72,7 +73,7 @@ type tfYear struct {
 	bestApps      map[string]int // top 10 apps with least vuln score
 	worstApps     map[string]int // top 10 apps with the greatest vuln score
 	toolUsage     map[string]int // map of [tool name] / count of usage
-	topCWE        map[int]int    // top 10 CWEs in this month's findings
+	topCWE        map[string]int // top 10 CWEs in this month's findings
 	trackerCount  map[string]int // map of [app name] issue tracker count
 	percntTracker float64        // apps with issue tracker / total apps
 }
