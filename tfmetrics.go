@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	tf "github.com/mtesauro/tfclient"
 	"net/http"
@@ -66,7 +67,12 @@ func sumMonth(m *tfMonth) {
 	// Create a search struct to hold 1 month worth of data to mine and populate
 	var search tf.SrchResp
 	monthSearch(m.tStamp, &search)
+
+	// Find Total vuns per month, vuln counts by LoB/Team, assessments by LoB/Team
+	// and Total assessments for the month
 	m.totVulns = len(search.Results)
+	m.vulnByLob, m.assessByLob = lobCounts(&search)
+	m.totAssess = totalMap(m.assessByLob)
 
 	// Find the apps with criticals aka int 5
 	m.critApps = appsWithVulns(5, &search)
@@ -78,8 +84,10 @@ func sumMonth(m *tfMonth) {
 	m.percntCrit = (float64(len(m.critApps)) / float64(appCount)) * 100
 	m.percntHigh = (float64(len(m.highApps)) / float64(appCount)) * 100
 
-	// Best and Worst apps
+	// Best and Worst apps and counts
 	m.bestApps, m.worstApps = rateApps(&search)
+	m.bAppsCnt = appVulnCounts(&search, m.bestApps)
+	m.wAppsCnt = appVulnCounts(&search, m.worstApps)
 
 	// Tool Usage
 	m.toolUsage = toolUsage(&search)
@@ -90,6 +98,135 @@ func sumMonth(m *tfMonth) {
 	return
 }
 
+func totalMap(a map[string]int) int {
+	t := 0
+	for _, v := range a {
+		t += v
+	}
+
+	return t
+}
+
+func appVulnCounts(srch *tf.SrchResp, a map[string]int) map[string]VulnCount {
+	vul := make(map[string]VulnCount)
+
+	// Cycle through the results struct, pulling out the vuln counts and apps assessed
+	for k, _ := range srch.Results {
+		// If the app name in these results is a key in the map sent in, do some sums
+		if _, ok := a[srch.Results[k].Apps.Name]; ok {
+			switch srch.Results[k].Severity.Value {
+			case 5:
+				// Critical
+				sumVulns(vul, srch.Results[k].Apps.Name, 5)
+			case 4:
+				// High
+				sumVulns(vul, srch.Results[k].Apps.Name, 4)
+			case 3:
+				// Medium
+				sumVulns(vul, srch.Results[k].Apps.Name, 3)
+			case 2:
+				// Low
+				sumVulns(vul, srch.Results[k].Apps.Name, 2)
+			}
+		}
+	}
+
+	return vul
+}
+
+func getAppId(teams *tf.TeamResp, n string) (int, error) {
+	appId := 0
+
+	for _, t := range teams.Tm {
+		for _, v := range t.Apps {
+			if v.Name == n {
+				return v.Id, nil
+			}
+		}
+	}
+
+	msg := fmt.Sprintf("Unable to find an AppID for %s", n)
+
+	return appId, errors.New(msg)
+}
+
+func lobCounts(srch *tf.SrchResp) (map[string]VulnCount, map[string]int) {
+	vul := make(map[string]VulnCount)
+	assess := make(map[string]int)
+	appSeen := make(map[string]bool)
+
+	// Cycle through the results struct, pulling out the vuln counts and apps assessed
+	for k, _ := range srch.Results {
+		switch srch.Results[k].Severity.Value {
+		case 5:
+			// Critical
+			sumVulns(vul, srch.Results[k].Team.Name, 5)
+		case 4:
+			// High
+			sumVulns(vul, srch.Results[k].Team.Name, 4)
+		case 3:
+			// Medium
+			sumVulns(vul, srch.Results[k].Team.Name, 3)
+		case 2:
+			// Low
+			sumVulns(vul, srch.Results[k].Team.Name, 2)
+		}
+		switch srch.Results[k].Severity.Value {
+		case 5, 4, 3, 2, 1:
+			a := srch.Results[k].Apps.Name
+			if _, ok := appSeen[a]; ok {
+				appSeen[a] = true
+			} else {
+				appSeen[a] = false
+			}
+			if appSeen[a] != true {
+				t := srch.Results[k].Team.Name
+				sumApps(assess, t, 1)
+			}
+		}
+	}
+
+	return vul, assess
+}
+
+func sumVulns(a map[string]VulnCount, name string, sev int) {
+	//Takes a map and add one to the int counter of matching vul type in the
+	//VulnCount struct under an app's name
+	if _, ok := a[name]; ok {
+		c := a[name].crit
+		h := a[name].high
+		m := a[name].med
+		l := a[name].low
+
+		switch sev {
+		case 5:
+			c++
+			a[name] = VulnCount{c, h, m, l}
+		case 4:
+			h++
+			a[name] = VulnCount{c, h, m, l}
+		case 3:
+			m++
+			a[name] = VulnCount{c, h, m, l}
+		case 2:
+			l++
+			a[name] = VulnCount{c, h, m, l}
+		}
+	} else {
+		// First time we've seen a[name]
+		switch sev {
+		case 5:
+			a[name] = VulnCount{1, 0, 0, 0}
+		case 4:
+			a[name] = VulnCount{0, 1, 0, 0}
+		case 3:
+			a[name] = VulnCount{0, 0, 1, 0}
+		case 2:
+			a[name] = VulnCount{0, 0, 0, 1}
+		}
+	}
+}
+
 func cweCounts(srch *tf.SrchResp) map[string]int {
 	// TODO - add an option to only pull CWEs of 1+ severity level(s)
 	cwes := make(map[string]int)
@@ -98,7 +235,7 @@ func cweCounts(srch *tf.SrchResp) map[string]int {
 	for k, _ := range srch.Results {
 		c := "CWE-" + strconv.Itoa(srch.Results[k].CweVuln.Id) +
 			": " + srch.Results[k].CweVuln.Name
-		cwes = sumApps(cwes, c, 1)
+		sumApps(cwes, c, 1)
 	}
 
 	return cwes
@@ -111,11 +248,10 @@ func toolUsage(srch *tf.SrchResp) map[string]int {
 	for k, _ := range srch.Results {
 		for i := 0; i < len(srch.Results[k].Scanners); i++ {
 			t := srch.Results[k].Scanners[i]
-			tools = sumApps(tools, t, 1)
+			sumApps(tools, t, 1)
 		}
 	}
 
-	//fmt.Printf("Tools count is %+v\n", tools)
 	return tools
 }
 
@@ -175,7 +311,7 @@ func rateApps(srch *tf.SrchResp) (map[string]int, map[string]int) {
 	return best, worse
 }
 
-func sumApps(a map[string]int, name string, val int) map[string]int {
+func sumApps(a map[string]int, name string, val int) {
 	// Takes a map and add val (value) to the int counter of map[string]int
 	// Sums up values under a label - usually an app name
 	if _, ok := a[name]; ok {
@@ -183,8 +319,6 @@ func sumApps(a map[string]int, name string, val int) map[string]int {
 	} else {
 		a[name] = val
 	}
-
-	return a
 }
 
 // Custom function to return a sorted map[int]map[string]int descending by default
@@ -279,7 +413,7 @@ func appsWithVulns(sev int, srch *tf.SrchResp) map[string]int {
 	// Cycle through the results struct, pulling out the severity level sent in
 	for k, _ := range srch.Results {
 		if srch.Results[k].Severity.Value == sev {
-			apps = sumApps(apps, srch.Results[k].Apps.Name, 1)
+			sumApps(apps, srch.Results[k].Apps.Name, 1)
 		}
 	}
 
@@ -370,7 +504,7 @@ func sumMaps(s ...map[string]int) map[string]int {
 	// occurances of the string
 	for _, v := range s {
 		for app, cnt := range v {
-			tot = sumApps(tot, app, cnt)
+			sumApps(tot, app, cnt)
 		}
 	}
 
@@ -410,7 +544,7 @@ func main() {
 	}
 
 	// CHEATING AND FIXING THE MONTH TO BE MARCH 30, 2015
-	m0.tStamp = time.Date(2015, time.Month(2), 28, 0, 0, 0, 0, time.UTC)
+	//m0.tStamp = time.Date(2015, time.Month(2), 28, 0, 0, 0, 0, time.UTC)
 	// CHEATING END
 
 	// Gather data for the month
@@ -421,8 +555,6 @@ func main() {
 	fmt.Println("Gethering quarter metrics...")
 	var q0 tfQuarter
 	sumQuarter(&m0, &q0)
-
-	//os.Exit(0)
 
 	// Print the metrics we've gathered so far to screen
 	// Eventually move this to a file so it can be emailed
@@ -488,6 +620,7 @@ func main() {
 	for j := 0; j < len(sBest); j++ {
 		for k, v := range sBest[j] {
 			fmt.Printf("  %v has a score of %v \n", k, v)
+			fmt.Printf("    %v vuln count (crit/high/med/low): %v,%v,%v,%v\n", k, m0.bAppsCnt[k].crit, m0.bAppsCnt[k].high, m0.bAppsCnt[k].med, m0.bAppsCnt[k].low)
 		}
 	}
 	// Worst apps
@@ -496,6 +629,7 @@ func main() {
 	for j := 0; j < len(sWorst); j++ {
 		for k, v := range sWorst[j] {
 			fmt.Printf("  %v has a score of %v \n", k, v)
+			fmt.Printf("    %v vuln count (crit/high/med/low): %v,%v,%v,%v\n", k, m0.wAppsCnt[k].crit, m0.wAppsCnt[k].high, m0.wAppsCnt[k].med, m0.wAppsCnt[k].low)
 		}
 	}
 	// Tool usage
@@ -518,6 +652,180 @@ func main() {
 			fmt.Printf("  %v occurrences of %v\n", v, k)
 		}
 	}
+	// LoB stats
+	fmt.Println("")
+	fmt.Printf("Total number of assessments this month: %+v\n", m0.totAssess)
+	fmt.Println("Assessments completed per LoB/Region")
+	for k, v := range m0.assessByLob {
+		fmt.Printf("  %+v had %+v assessments\n", k, v)
+		fmt.Printf("    %v vuln count (crit/high/med/low): %v,%v,%v,%v\n", k, m0.vulnByLob[k].crit, m0.vulnByLob[k].high, m0.vulnByLob[k].med, m0.vulnByLob[k].low)
+	}
+
+	// ==========================[ Month - 1 ]=====================================
+
+	// Current Month - 1 month
+	var m1 tfMonth
+	m1.tStamp = previousMonth(m0.tStamp)
+	sumMonth(&m1)
+	fmt.Println("")
+	fmt.Println("==========[Month - 1 Metrics]==========")
+	fmt.Printf("Metrics for %+v %+v", m1.tStamp.Month(), m1.tStamp.Year())
+	fmt.Printf(", which is part of %+v\n", m1.quarter)
+	fmt.Printf("Total vulnerabilities found for %+v was %+v\n", m1.tStamp.Month(), m1.totVulns)
+	// Criticals
+	if len(m1.critApps) > 0 {
+		fmt.Printf("Total apps with critical findings is %+v\n", len(m1.critApps))
+		fmt.Println("Individual App critical finding counts are:")
+		sMCrit := sortCounts(m1.critApps, false)
+		for j := 0; j < len(sMCrit); j++ {
+			for k, v := range sMCrit[j] {
+				fmt.Printf("  %v has %v critical findings\n", k, v)
+			}
+		}
+		fmt.Printf("Percentage of Apps with critical findings is %.2f%%\n\n", m1.percntCrit)
+	}
+	// Highs
+	if len(m1.highApps) > 0 {
+		fmt.Printf("Total apps with highs is %+v\n", len(m1.highApps))
+		fmt.Println("Individual App high finding counts are:")
+		sMHigh := sortCounts(m1.highApps, false)
+		for j := 0; j < len(sMHigh); j++ {
+			for k, v := range sMHigh[j] {
+				fmt.Printf("  %v has %v critical findings\n", k, v)
+			}
+		}
+		fmt.Printf("Percentage of Apps with high findings is %.2f%%\n\n", m1.percntHigh)
+	}
+	// Best apps
+	fmt.Println("The best apps of the month (and their score) are: (smaller is better)")
+	sBest = sortCounts(m1.bestApps, true)
+	for j := 0; j < len(sBest); j++ {
+		for k, v := range sBest[j] {
+			fmt.Printf("  %v has a score of %v \n", k, v)
+			fmt.Printf("    %v vuln count (crit/high/med/low): %v,%v,%v,%v\n", k, m1.bAppsCnt[k].crit, m1.bAppsCnt[k].high, m1.bAppsCnt[k].med, m1.bAppsCnt[k].low)
+		}
+	}
+	// Worst apps
+	fmt.Println("The worst apps of the month (and their score) are: (smaller is better)")
+	sWorst = sortCounts(m1.worstApps, false)
+	for j := 0; j < len(sWorst); j++ {
+		for k, v := range sWorst[j] {
+			fmt.Printf("  %v has a score of %v \n", k, v)
+			fmt.Printf("    %v vuln count (crit/high/med/low): %v,%v,%v,%v\n", k, m1.wAppsCnt[k].crit, m1.wAppsCnt[k].high, m1.wAppsCnt[k].med, m1.wAppsCnt[k].low)
+		}
+	}
+	// Tool usage
+	fmt.Printf("Number of assessments by type for %+v %+v\n", m1.tStamp.Month(), m1.tStamp.Year())
+	sTools = sortCounts(m1.toolUsage, false)
+	for j := 0; j < len(sTools); j++ {
+		for k, v := range sTools[j] {
+			fmt.Printf("  %v found %v results\n", k, v)
+		}
+	}
+	// Top 10 CWEs
+	fmt.Printf("The Top 10 CWE Vulnerabilities for %+v %+v\n", m1.tStamp.Month(), m1.tStamp.Year())
+	sCwe = sortCounts(m1.topCWE, false)
+	max = 10
+	if len(sCwe) < max {
+		max = len(sCwe)
+	}
+	for j := 0; j < max; j++ {
+		for k, v := range sCwe[j] {
+			fmt.Printf("  %v occurrences of %v\n", v, k)
+		}
+	}
+	// LoB stats
+	fmt.Println("")
+	fmt.Printf("Total number of assessments this month: %+v\n", m1.totAssess)
+	fmt.Println("Assessments completed per LoB/Region")
+	for k, v := range m1.assessByLob {
+		fmt.Printf("  %+v had %+v assessments\n", k, v)
+		fmt.Printf("    %v vuln count (crit/high/med/low): %v,%v,%v,%v\n", k, m1.vulnByLob[k].crit, m1.vulnByLob[k].high, m1.vulnByLob[k].med, m1.vulnByLob[k].low)
+	}
+
+	// ==========================[ Month - 2 ]=====================================
+
+	// Current Month - 2 months
+	var m2 tfMonth
+	m2.tStamp = previousMonth(m1.tStamp)
+	sumMonth(&m2)
+	fmt.Println("")
+	fmt.Println("==========[Month - 2 Metrics]==========")
+	fmt.Printf("Metrics for %+v %+v", m2.tStamp.Month(), m2.tStamp.Year())
+	fmt.Printf(", which is part of %+v\n", m2.quarter)
+	fmt.Printf("Total vulnerabilities found for %+v was %+v\n", m2.tStamp.Month(), m2.totVulns)
+	// Criticals
+	if len(m2.critApps) > 0 {
+		fmt.Printf("Total apps with critical findings is %+v\n", len(m2.critApps))
+		fmt.Println("Individual App critical finding counts are:")
+		sMCrit := sortCounts(m2.critApps, false)
+		for j := 0; j < len(sMCrit); j++ {
+			for k, v := range sMCrit[j] {
+				fmt.Printf("  %v has %v critical findings\n", k, v)
+			}
+		}
+		fmt.Printf("Percentage of Apps with critical findings is %.2f%%\n\n", m2.percntCrit)
+	}
+	// Highs
+	if len(m2.highApps) > 0 {
+		fmt.Printf("Total apps with highs is %+v\n", len(m2.highApps))
+		fmt.Println("Individual App high finding counts are:")
+		sMHigh := sortCounts(m2.highApps, false)
+		for j := 0; j < len(sMHigh); j++ {
+			for k, v := range sMHigh[j] {
+				fmt.Printf("  %v has %v critical findings\n", k, v)
+			}
+		}
+		fmt.Printf("Percentage of Apps with high findings is %.2f%%\n\n", m2.percntHigh)
+	}
+	// Best apps
+	fmt.Println("The best apps of the month (and their score) are: (smaller is better)")
+	sBest = sortCounts(m2.bestApps, true)
+	for j := 0; j < len(sBest); j++ {
+		for k, v := range sBest[j] {
+			fmt.Printf("  %v has a score of %v \n", k, v)
+			fmt.Printf("    %v vuln count (crit/high/med/low): %v,%v,%v,%v\n", k, m2.bAppsCnt[k].crit, m2.bAppsCnt[k].high, m2.bAppsCnt[k].med, m2.bAppsCnt[k].low)
+		}
+	}
+	// Worst apps
+	fmt.Println("The worst apps of the month (and their score) are: (smaller is better)")
+	sWorst = sortCounts(m2.worstApps, false)
+	for j := 0; j < len(sWorst); j++ {
+		for k, v := range sWorst[j] {
+			fmt.Printf("  %v has a score of %v \n", k, v)
+			fmt.Printf("    %v vuln count (crit/high/med/low): %v,%v,%v,%v\n", k, m2.wAppsCnt[k].crit, m2.wAppsCnt[k].high, m2.wAppsCnt[k].med, m2.wAppsCnt[k].low)
+		}
+	}
+	// Tool usage
+	fmt.Printf("Number of assessments by type for %+v %+v\n", m2.tStamp.Month(), m2.tStamp.Year())
+	sTools = sortCounts(m2.toolUsage, false)
+	for j := 0; j < len(sTools); j++ {
+		for k, v := range sTools[j] {
+			fmt.Printf("  %v found %v results\n", k, v)
+		}
+	}
+	// Top 10 CWEs
+	fmt.Printf("The Top 10 CWE Vulnerabilities for %+v %+v\n", m2.tStamp.Month(), m2.tStamp.Year())
+	sCwe = sortCounts(m2.topCWE, false)
+	max = 10
+	if len(sCwe) < max {
+		max = len(sCwe)
+	}
+	for j := 0; j < max; j++ {
+		for k, v := range sCwe[j] {
+			fmt.Printf("  %v occurrences of %v\n", v, k)
+		}
+	}
+	// LoB stats
+	fmt.Println("")
+	fmt.Printf("Total number of assessments this month: %+v\n", m2.totAssess)
+	fmt.Println("Assessments completed per LoB/Region")
+	for k, v := range m2.assessByLob {
+		fmt.Printf("  %+v had %+v assessments\n", k, v)
+		fmt.Printf("    %v vuln count (crit/high/med/low): %v,%v,%v,%v\n", k, m2.vulnByLob[k].crit, m2.vulnByLob[k].high, m2.vulnByLob[k].med, m2.vulnByLob[k].low)
+	}
+
+	// ==========================[ Quarterly ]=====================================
 
 	// Quarterly stats
 	fmt.Println("")
@@ -582,6 +890,22 @@ func main() {
 	for j := 0; j < max; j++ {
 		for k, v := range sQCwe[j] {
 			fmt.Printf("  %v occurrences of %v\n", v, k)
+		}
+	}
+
+	fmt.Println("")
+	fmt.Println("Copy and Paste into a plain text file to create a CSV")
+	fmt.Println("")
+	fmt.Printf("Lob,%+v Crit/High,%+v Tot Asmts,%+v Crit/High,%+v Tot Asmts,%+v Crit/High,%+v Tot Asmts\n",
+		m0.tStamp.Month(), m0.tStamp.Month(), m1.tStamp.Month(), m1.tStamp.Month(), m2.tStamp.Month(), m2.tStamp.Month())
+	sAsByLob := sortCounts(m0.assessByLob, false)
+	for j := 0; j < len(sAsByLob); j++ {
+		for k, _ := range sAsByLob[j] {
+			fmt.Printf("%+v,%+v,%+v,%+v,%+v,%+v,%+v\n", k,
+				(m0.vulnByLob[k].crit + m0.vulnByLob[k].high), m0.assessByLob[k],
+				(m1.vulnByLob[k].crit + m1.vulnByLob[k].high), m1.assessByLob[k],
+				(m2.vulnByLob[k].crit + m2.vulnByLob[k].high), m2.assessByLob[k],
+			)
 		}
 	}
 

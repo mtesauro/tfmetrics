@@ -16,22 +16,34 @@ import (
 ///////////////////////////////////////////////////////////////////
 
 type tfMonth struct {
-	tStamp     time.Time      // Time stored as Go's time.Time stored as first day of the month
-	mpartial   bool           // if we're part way through the month
-	quarter    string         // what quarter we're in - e.g. 2015-Q1
-	qpartial   bool           // if we're part way through the quarter
-	totVulns   int            // total vuls - includes all but info
-	critApps   map[string]int // map of [app name] count of crits
-	percntCrit float64        // apps with crits / total apps * 100 e.g. 8.03%
-	highApps   map[string]int // map of [app name] count of highs
-	percntHigh float64        // apps with highs / total apps * 100 e.g. 23.72%
+	tStamp      time.Time            // Time stored as Go's time.Time stored as first day of the month
+	mpartial    bool                 // if we're part way through the month
+	quarter     string               // what quarter we're in - e.g. 2015-Q1
+	qpartial    bool                 // if we're part way through the quarter
+	totVulns    int                  // total vuls - includes all but info
+	vulnByLob   map[string]VulnCount // map of [LoB/Team name][vuln int] number of findings
+	assessByLob map[string]int       // map of [LoB/Team name] number of apps assessed for the month
+	totAssess   int                  // total number of apps with findings for the month
+	critApps    map[string]int       // map of [app name] count of crits
+	percntCrit  float64              // apps with crits / total apps * 100 e.g. 8.03%
+	highApps    map[string]int       // map of [app name] count of highs
+	percntHigh  float64              // apps with highs / total apps * 100 e.g. 23.72%
 	// maps of [app name] vuln score for the next 2
-	bestApps      map[string]int // top 10 apps with least vuln score
-	worstApps     map[string]int // top 10 apps with the greatest vuln score
-	toolUsage     map[string]int // map of [tool name] / count of usage
-	topCWE        map[string]int // top 10 CWEs in this month's findings
-	trackerCount  map[string]int // map of [app name] issue tracker count
-	percntTracker float64        // apps with issue tracker / total apps
+	bestApps      map[string]int       // top 10 apps with least vuln score
+	bAppsCnt      map[string]VulnCount //For each best app, the Vuln counts for that app
+	worstApps     map[string]int       // top 10 apps with the greatest vuln score
+	wAppsCnt      map[string]VulnCount //For each worst app, the Vuln counts for that app
+	toolUsage     map[string]int       // map of [tool name] / count of usage
+	topCWE        map[string]int       // top 10 CWEs in this month's findings
+	trackerCount  map[string]int       // map of [app name] issue tracker count
+	percntTracker float64              // apps with issue tracker / total apps
+}
+
+type VulnCount struct {
+	crit int
+	high int
+	med  int
+	low  int
 }
 
 /////////////////////////////////////////////////////////////////////
