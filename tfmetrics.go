@@ -37,7 +37,11 @@ func getTeams(tfc *http.Client, t *tf.TeamResp) {
 	}
 
 	// Setup Team struct to hold the data we received
-	tf.MakeTeamStruct(t, tResp)
+	err = tf.MakeTeamStruct(t, tResp)
+	if err != nil {
+		fmt.Print(err)
+		os.Exit(1)
+	}
 
 	return
 }
@@ -911,4 +915,9 @@ func main() {
 
 	fmt.Println("")
 	fmt.Println("Done.")
+
+	//TODO - Global
+	//(1) For LoB stats - First get a list of LoB/Teams (getTeams call),
+	//    set them all to zero, _then_ run the month stat's like I do now so that
+	//    those with no assessments still show up.
 }
