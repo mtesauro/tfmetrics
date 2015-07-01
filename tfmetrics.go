@@ -920,4 +920,5 @@ func main() {
 	//(1) For LoB stats - First get a list of LoB/Teams (getTeams call),
 	//    set them all to zero, _then_ run the month stat's like I do now so that
 	//    those with no assessments still show up.
+	// Add version and output it on each run start.
 }
