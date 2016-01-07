@@ -4,11 +4,12 @@ package main
 import (
 	"errors"
 	"fmt"
-	tf "github.com/mtesauro/tfclient"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
+
+	tf "github.com/mtesauro/tfclient"
 )
 
 // Metrics functions
@@ -855,7 +856,7 @@ func main() {
 		sQHigh := sortCounts(q0.highApps, false)
 		for j := 0; j < len(sQHigh); j++ {
 			for k, v := range sQHigh[j] {
-				fmt.Printf("  %v has %v critical findings\n", k, v)
+				fmt.Printf("  %v has %v high findings\n", k, v)
 			}
 		}
 		fmt.Printf("Percentage of Apps with high findings is %.2f%%\n\n", q0.percntHigh)
